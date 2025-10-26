@@ -67,7 +67,7 @@ import com.qualcomm.robotcore.util.ElapsedTime;
 
 @TeleOp(name="Teleop Mode", group="Linear OpMode")
 //@Disabled
-public class TeleopMode extends LinearOpMode {
+public class DecodeOpMode extends LinearOpMode {
 
     // Declare OpMode members for each of the 4 motors.
     private ElapsedTime runtime = new ElapsedTime();
@@ -81,9 +81,19 @@ public class TeleopMode extends LinearOpMode {
     private CRServo servo = null;
 
     // Setting our velocity targets. These values are in ticks per second!
-    private static final int bankVelocity = 1300;
-    private static final int farVelocity = 1900;
-    private static final int maxVelocity = 2200;
+    private static final int bankVelocity = 1350;
+    private static final int firstBankVelocity = 1600;
+    private static final int farVelocity = 1800;
+    private static final int maxVelocity = 1800;
+    private static final String TELEOP = "TELEOP";
+    private static final String AUTO_BLUE = "AUTO BLUE";
+    private static final String AUTO_RED = " AUTO RED";
+    private String operationSelected = TELEOP;
+    private ElapsedTime autoLaunchTimer = new ElapsedTime();
+    private ElapsedTime autoDriveTimer = new ElapsedTime();
+    private ElapsedTime shotTimer = new ElapsedTime();
+    private double WHEELS_INCHES_TO_TICKS = (28 * 5 * 4) / (3 * Math.PI);
+
 
     @Override
     public void runOpMode() {
@@ -119,13 +129,22 @@ public class TeleopMode extends LinearOpMode {
         coreHex.setDirection(DcMotorSimple.Direction.REVERSE);
         servo.setPower(0);
 
-        // Wait for the game to start (driver presses START)
-        telemetry.addData("Status", "Initialized");
-        telemetry.update();
-
+        //On initilization the Driver Station will prompt for which OpMode should be run - Auto Blue, Auto Red, or TeleOp
+        while (opModeInInit()) {
+            operationSelected = selectOperation(operationSelected, gamepad1.psWasPressed());
+            telemetry.update();
+        }
         waitForStart();
-        runtime.reset();
+        if (operationSelected.equals(AUTO_BLUE)) {
+            doAutoBlue();
+        } else if (operationSelected.equals(AUTO_RED)) {
+            doAutoRed();
+        } else {
+            doTeleOp();
+        }
+    }
 
+    private void doTeleOp() {
         // run until the end of the match (driver presses STOP)
         while (opModeIsActive()) {
             double max;
@@ -177,6 +196,31 @@ public class TeleopMode extends LinearOpMode {
     }
 
     /**
+     * If the PS/Home button is pressed, the robot will cycle through the OpMode options following the if/else statement here.
+     * The telemetry readout to the Driver Station App will update to reflect which is currently selected for when "play" is pressed.
+     */
+    private String selectOperation(String state, boolean cycleNext) {
+        if (cycleNext) {
+            if (state.equals(TELEOP)) {
+                state = AUTO_BLUE;
+            } else if (state.equals(AUTO_BLUE)) {
+                state = AUTO_RED;
+            } else if (state.equals(AUTO_RED)) {
+                state = TELEOP;
+            } else {
+                telemetry.addData("WARNING", "Unknown Operation State Reached - Restart Program");
+            }
+        }
+        telemetry.addLine("Press Home Button to cycle options");
+        telemetry.addData("CURRENT SELECTION", state);
+        if (state.equals(AUTO_BLUE) || state.equals(AUTO_RED)) {
+            telemetry.addLine("Please remember to enable the AUTO timer!");
+        }
+        telemetry.addLine("Press START to start your program");
+        return state;
+    }
+
+    /**
      * Manual control for the Core Hex powered feeder and the agitator servo in the hopper
      */
     private void manualCoreHexAndServoControl() {
@@ -188,9 +232,9 @@ public class TeleopMode extends LinearOpMode {
         }
         // Manual control for the hopper's servo
         if (gamepad1.dpad_left) {
-            servo.setPower(1);
-        } else if (gamepad1.dpad_right) {
             servo.setPower(-1);
+        } else if (gamepad1.dpad_right) {
+            servo.setPower(1);
         }
     }
 
@@ -227,8 +271,12 @@ public class TeleopMode extends LinearOpMode {
      */
     private void bankShotAuto() {
         ((DcMotorEx) flywheel).setVelocity(bankVelocity);
-        servo.setPower(-1);
-        if (((DcMotorEx) flywheel).getVelocity() >= bankVelocity - 50) {
+        servo.setPower(1);
+        if (((DcMotorEx) flywheel).getVelocity() < bankVelocity - 50) {
+            shotTimer.reset();
+        }
+
+        if (shotTimer.milliseconds() > 1000) {
             coreHex.setPower(1);
         } else {
             coreHex.setPower(0);
@@ -242,11 +290,117 @@ public class TeleopMode extends LinearOpMode {
      */
     private void farPowerAuto() {
         ((DcMotorEx) flywheel).setVelocity(farVelocity);
-        servo.setPower(-1);
+        servo.setPower(1);
         if (((DcMotorEx) flywheel).getVelocity() >= farVelocity - 100) {
             coreHex.setPower(1);
         } else {
             coreHex.setPower(0);
+        }
+    }
+
+    //Autonomous Code
+//For autonomous, the robot will launch the pre-loaded 3 balls then back away from the goal, turn, and back up off the launch line.
+
+    /**
+     * For autonomous, the robot is using a timer and encoders on the drivetrain to move away from the target.
+     * This method contains the math to be used with the inputted distance for the encoders, resets the elapsed timer, and
+     * provides a check for it to run so long as the motors are busy and the timer has not run out.
+     */
+    private void autoDrive(double speed, int leftDistanceInch, int rightDistanceInch, int timeout_ms) {
+        autoDriveTimer.reset();
+        frontLeftDrive.setTargetPosition((int) (frontLeftDrive.getCurrentPosition() + leftDistanceInch * WHEELS_INCHES_TO_TICKS));
+        frontRightDrive.setTargetPosition((int) (frontRightDrive.getCurrentPosition() + rightDistanceInch * WHEELS_INCHES_TO_TICKS));
+        backLeftDrive.setTargetPosition((int) (backLeftDrive.getCurrentPosition() + leftDistanceInch * WHEELS_INCHES_TO_TICKS));
+        backRightDrive.setTargetPosition((int) (backRightDrive.getCurrentPosition() + rightDistanceInch * WHEELS_INCHES_TO_TICKS));
+
+        frontLeftDrive.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+        frontRightDrive.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+        backLeftDrive.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+        backRightDrive.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+
+        frontLeftDrive.setPower(Math.abs(speed));
+        frontRightDrive.setPower(Math.abs(speed));
+        backLeftDrive.setPower(Math.abs(speed));
+        backRightDrive.setPower(Math.abs(speed));
+
+        while (opModeIsActive() && (frontLeftDrive.isBusy() || frontRightDrive.isBusy() || backLeftDrive.isBusy() || backRightDrive.isBusy()) && autoDriveTimer.milliseconds() < timeout_ms) {
+            idle();
+        }
+        frontLeftDrive.setPower(0);
+        frontRightDrive.setPower(0);
+        backLeftDrive.setPower(0);
+        backRightDrive.setPower(0);
+
+        frontLeftDrive.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+        frontRightDrive.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+        backLeftDrive.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+        backRightDrive.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+    }
+
+    /**
+     * Blue Alliance Autonomous
+     * The robot will fire the pre-loaded balls until the 10 second timer ends.
+     * Then it will back away from the goal and off the launch line.
+     */
+    private void doAutoBlue() {
+        if (opModeIsActive()) {
+            telemetry.addData("RUNNING OPMODE", operationSelected);
+            telemetry.update();
+
+            ((DcMotorEx) flywheel).setVelocity(firstBankVelocity);
+            // Back Up
+            autoDrive(0.75, -40, -40, 5000);
+            // Turn
+            autoDrive(0.75, -10, 10, 5000);
+
+            // Fire balls
+            autoLaunchTimer.reset();
+            while (opModeIsActive() && autoLaunchTimer.milliseconds() < 10000) {
+                bankShotAuto();
+                telemetry.addData("Launcher Countdown", autoLaunchTimer.seconds());
+                telemetry.update();
+            }
+            ((DcMotorEx) flywheel).setVelocity(0);
+            coreHex.setPower(0);
+            servo.setPower(0);
+            // Turn
+            autoDrive(0.5, 10, -10, 5000);
+            // Drive off Line
+            autoDrive(1, -30, -30, 5000);
+        }
+    }
+
+    /**
+     * Red Alliance Autonomous
+     * The robot will fire the pre-loaded balls until the 10 second timer ends.
+     * Then it will back away from the goal and off the launch line.
+     */
+    private void doAutoRed() {
+        if (opModeIsActive()) {
+            telemetry.addData("RUNNING OPMODE", operationSelected);
+            telemetry.update();
+
+            ((DcMotorEx) flywheel).setVelocity(firstBankVelocity);
+
+            // Back Up
+            autoDrive(0.75, -40, -40, 5000);
+            // Turn
+            autoDrive(0.75, 10, -10, 5000);
+
+            // Fire balls
+            autoLaunchTimer.reset();
+            while (opModeIsActive() && autoLaunchTimer.milliseconds() < 10000) {
+                bankShotAuto();
+                telemetry.addData("Launcher Countdown", autoLaunchTimer.seconds());
+                telemetry.update();
+            }
+            ((DcMotorEx) flywheel).setVelocity(0);
+            coreHex.setPower(0);
+            servo.setPower(0);
+            // Turn
+            autoDrive(0.5, -10, 10, 5000);
+            // Drive off Line
+            autoDrive(1, -30, -30, 5000);
         }
     }
 
