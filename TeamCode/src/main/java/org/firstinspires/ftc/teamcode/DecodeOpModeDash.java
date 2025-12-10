@@ -29,9 +29,13 @@
 
 package org.firstinspires.ftc.teamcode;
 
-import com.acmerobotics.dashboard.FtcDashboard;
-import com.acmerobotics.dashboard.config.Config;
-import com.acmerobotics.dashboard.telemetry.MultipleTelemetry;
+// import com.acmerobotics.dashboard.FtcDashboard;
+// import com.acmerobotics.dashboard.config.Config;
+// import com.acmerobotics.dashboard.telemetry.MultipleTelemetry;
+import com.qualcomm.hardware.limelightvision.LLResult;
+import com.qualcomm.hardware.limelightvision.LLResultTypes;
+import com.qualcomm.hardware.limelightvision.LLStatus;
+import com.qualcomm.hardware.limelightvision.Limelight3A;
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import com.qualcomm.robotcore.hardware.CRServo;
@@ -39,7 +43,13 @@ import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.DcMotorSimple;
 import com.qualcomm.robotcore.hardware.PIDFCoefficients;
+import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.util.ElapsedTime;
+
+import org.opencv.core.Mat;
+
+import java.util.List;
+import java.util.Objects;
 
 /*
  * This file contains an example of a Linear "OpMode".
@@ -69,7 +79,7 @@ import com.qualcomm.robotcore.util.ElapsedTime;
  * Remove or comment out the @Disabled line to add this OpMode to the Driver Station OpMode list
  */
 
-@Config
+// @Config
 @TeleOp(name="DecodeOpModeWithDash", group="Linear OpMode")
 //@Disabled
 public class DecodeOpModeDash extends LinearOpMode {
@@ -83,17 +93,33 @@ public class DecodeOpModeDash extends LinearOpMode {
 
     private DcMotorEx flywheel = null;
     private DcMotor coreHex = null;
+    private DcMotorEx intake = null;
+    private Servo lifter = null;
     private CRServo servo = null;
 
+
+
+
+    private Limelight3A limelight = null;
     // Setting our velocity targets. These values are in ticks per second!
-    public static int bankVelocity = 1400;
-    public static int firstBankVelocity = 1400;
-    public static int farVelocity = 1725;
-    public static final int maxVelocity = 1725;
+    public static int bankVelocity = 1350;
+    public static int firstBankVelocity = 1350;
+    public static int farVelocity = 1625;
+    public static final int maxVelocity = 1625;
     private static final String TELEOP = "TELEOP";
-    private static final String AUTO_BLUE = "AUTO BLUE";
-    private static final String AUTO_RED = " AUTO RED";
+    private static final String AUTO_BLUE_NEAR = "AUTO BLUE NEAR";
+    private static final String AUTO_BLUE_FAR = "AUTO BLUE FAR";
+    private static final String AUTO_RED_NEAR = " AUTO RED NEAR";
+    private static final String AUTO_RED_FAR = " AUTO RED FAR";
+
+    private static final String RED = "RED";
+    private static final String BLUE = "BLUE";
+
     private String operationSelected = TELEOP;
+
+    private String allianceSelected = RED;
+
+
     private ElapsedTime autoLaunchTimer = new ElapsedTime();
     private ElapsedTime autoDriveTimer = new ElapsedTime();
     private ElapsedTime shotTimer = new ElapsedTime();
@@ -105,7 +131,13 @@ public class DecodeOpModeDash extends LinearOpMode {
     public static double pidD = 0.0;
 
     private boolean reduction_active = false;
-    private boolean last_down_button = false;
+private boolean intake_active = false;
+private boolean servo_active_for_intake = false;
+    private boolean autoAimEnabled = false;
+    private double aimFrontLeft = 0.0;
+    private double aimFrontRight = 0.0;
+    private double aimBackLeft = 0.0;
+    private double aimBackRight = 0.0;
 
     @Override
     public void runOpMode() {
@@ -121,6 +153,10 @@ public class DecodeOpModeDash extends LinearOpMode {
         coreHex = hardwareMap.get(DcMotor.class, "coreHex");
         servo = hardwareMap.get(CRServo.class, "servo");
 
+        intake = hardwareMap.get(DcMotorEx.class, "intake");
+        lifter = hardwareMap.get(Servo.class, "lifter");
+
+        limelight = hardwareMap.get(Limelight3A.class, "limelight");
 
         // ########################################################################################
         // !!!            IMPORTANT Drive Information. Test your motor directions.            !!!!!
@@ -137,25 +173,38 @@ public class DecodeOpModeDash extends LinearOpMode {
         frontRightDrive.setDirection(DcMotor.Direction.REVERSE);
         backRightDrive.setDirection(DcMotor.Direction.REVERSE);
 
+        //intake.setDirection(DcMotor.Direction.REVERSE);
+        //lifter.setDirection(Servo.Direction.REVERSE);
+
         flywheel.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
         PIDFCoefficients pidfNew = new PIDFCoefficients(pidP, pidI, pidD, pidF);
         flywheel.setPIDFCoefficients(DcMotor.RunMode.RUN_USING_ENCODER, pidfNew);
+
         coreHex.setDirection(DcMotorSimple.Direction.REVERSE);
         servo.setPower(0);
+
+        limelight.pipelineSwitch(0);
+        limelight.start();
 
         //On initilization the Driver Station will prompt for which OpMode should be run - Auto Blue, Auto Red, or TeleOp
         while (opModeInInit()) {
             operationSelected = selectOperation(operationSelected, gamepad1.psWasPressed());
+            allianceSelected = selectAlliance(allianceSelected, gamepad1.xWasPressed());
             telemetry.setMsTransmissionInterval(100);
 
             telemetry.update();
         }
         waitForStart();
-        if (operationSelected.equals(AUTO_BLUE)) {
-            doAutoBlue();
-        } else if (operationSelected.equals(AUTO_RED)) {
-            doAutoRed();
+        if (operationSelected.equals(AUTO_BLUE_FAR)) {
+            doAutoBlueFar();
+        } else if (operationSelected.equals(AUTO_BLUE_NEAR)) {
+            doAutoBlueNear();
+        } else if (operationSelected.equals(AUTO_RED_FAR)) {
+            doAutoRedFar();
+        } else if (operationSelected.equals(AUTO_RED_NEAR)) {
+            doAutoRedNear();
         } else {
+            autoAimEnabled = true;
             doTeleOp();
         }
     }
@@ -163,8 +212,22 @@ public class DecodeOpModeDash extends LinearOpMode {
     private void doTeleOp() {
         // run until the end of the match (driver presses STOP)
         while (opModeIsActive()) {
-            FtcDashboard dashboard = FtcDashboard.getInstance();
-            telemetry = new MultipleTelemetry(telemetry, dashboard.getTelemetry());
+            // FtcDashboard dashboard = FtcDashboard.getInstance();
+            // telemetry = new MultipleTelemetry(telemetry, dashboard.getTelemetry());
+
+            if(gamepad1.circleWasPressed()) {
+                intake_active = !intake_active;
+            }
+
+            if(intake_active) {
+                ((DcMotorEx) intake).setVelocity(6000);
+                lifter.setPosition(1.0);
+                servo_active_for_intake = true;
+            } else {
+                ((DcMotorEx) intake).setVelocity(0);
+                lifter.setPosition(0.25);
+                servo_active_for_intake = false;
+            }
 
             double max;
 
@@ -200,14 +263,16 @@ public class DecodeOpModeDash extends LinearOpMode {
                 backLeftPower /= max;
                 backRightPower /= max;
             }
+            boolean autoAimActive = setFlywheelVelocity();
 
             // Send calculated power to wheels
-            frontLeftDrive.setPower(frontLeftPower);
-            frontRightDrive.setPower(frontRightPower);
-            backLeftDrive.setPower(backLeftPower);
-            backRightDrive.setPower(backRightPower);
+            if(!autoAimActive) {
+                frontLeftDrive.setPower(frontLeftPower);
+                frontRightDrive.setPower(frontRightPower);
+                backLeftDrive.setPower(backLeftPower);
+                backRightDrive.setPower(backRightPower);
+            }
 
-            setFlywheelVelocity();
             manualCoreHexAndServoControl();
 
             // Show the elapsed game time and wheel power.
@@ -228,10 +293,14 @@ public class DecodeOpModeDash extends LinearOpMode {
     private String selectOperation(String state, boolean cycleNext) {
         if (cycleNext) {
             if (state.equals(TELEOP)) {
-                state = AUTO_BLUE;
-            } else if (state.equals(AUTO_BLUE)) {
-                state = AUTO_RED;
-            } else if (state.equals(AUTO_RED)) {
+                state = AUTO_BLUE_FAR;
+            } else if (state.equals(AUTO_BLUE_FAR)) {
+                state = AUTO_BLUE_NEAR;
+            } else if (state.equals(AUTO_BLUE_NEAR)) {
+                state = AUTO_RED_FAR;
+            } else if (state.equals(AUTO_RED_FAR)) {
+                state = AUTO_RED_NEAR;
+            } else if (state.equals(AUTO_RED_NEAR)) {
                 state = TELEOP;
             } else {
                 telemetry.addData("WARNING", "Unknown Operation State Reached - Restart Program");
@@ -239,17 +308,32 @@ public class DecodeOpModeDash extends LinearOpMode {
         }
         telemetry.addLine("Press Home Button to cycle options");
         telemetry.addData("CURRENT SELECTION", state);
-        if (state.equals(AUTO_BLUE) || state.equals(AUTO_RED)) {
+        if (state.equals(AUTO_BLUE_NEAR) || state.equals(AUTO_RED_NEAR) || state.equals(AUTO_RED_FAR) || state.equals(AUTO_BLUE_FAR)) {
             telemetry.addLine("Please remember to enable the AUTO timer!");
         }
         telemetry.addLine("Press START to start your program");
         return state;
     }
 
+    private String selectAlliance(String state, boolean cycleNext) {
+        if (cycleNext) {
+            if (state.equals(RED)) {
+                state = BLUE;
+            } else if (state.equals(BLUE)) {
+                state = RED;
+            } else {
+                telemetry.addData("WARNING", "Unknown Operation State Reached - Restart Program");
+            }
+        }
+        telemetry.addLine("Press X Button to cycle alliance");
+        telemetry.addData("CURRENT ALLIANCE", state);
+       return state;
+    }
+
     /**
      * Manual control for the Core Hex powered feeder and the agitator servo in the hopper
      */
-    private void manualCoreHexAndServoControl() {
+ private void manualCoreHexAndServoControl() {
         // Manual control for the Core Hex intake
         if (gamepad1.cross) {
             coreHex.setPower(0.5);
@@ -257,7 +341,9 @@ public class DecodeOpModeDash extends LinearOpMode {
             coreHex.setPower(-0.5);
         }
         // Manual control for the hopper's servo
-        if (gamepad1.dpad_left) {
+        if (servo_active_for_intake) {
+            servo.setPower(1);
+        } else if (gamepad1.dpad_left) {
             servo.setPower(-1);
         } else if (gamepad1.dpad_right) {
             servo.setPower(1);
@@ -269,25 +355,25 @@ public class DecodeOpModeDash extends LinearOpMode {
      * Circle and Square will spin up ONLY the flywheel to the target velocity set.
      * The bumpers will activate the flywheel, Core Hex feeder, and servo to cycle a series of balls.
      */
-    private void setFlywheelVelocity() {
+    private boolean setFlywheelVelocity() {
         if (gamepad1.options) {
             flywheel.setPower(-0.5);
         } else if (gamepad1.left_bumper) {
-            farPowerAuto();
+            return farPowerAuto();
         } else if (gamepad1.right_bumper) {
             bankShotAuto();
-        } else if (gamepad1.circle) {
-            ((DcMotorEx) flywheel).setVelocity(bankVelocity);
         } else if (gamepad1.square) {
             ((DcMotorEx) flywheel).setVelocity(maxVelocity);
         } else {
             ((DcMotorEx) flywheel).setVelocity(0);
             coreHex.setPower(0);
             // The check below is in place to prevent stuttering with the servo. It checks if the servo is under manual control!
-            if (!gamepad1.dpad_right && !gamepad1.dpad_left) {
+            if (!gamepad1.dpad_right && !gamepad1.dpad_left && !servo_active_for_intake) {
                 servo.setPower(0);
             }
         }
+
+        return false;
     }
 
     /**
@@ -297,16 +383,43 @@ public class DecodeOpModeDash extends LinearOpMode {
      */
     private void bankShotAuto() {
         ((DcMotorEx) flywheel).setVelocity(bankVelocity);
-        servo.setPower(1);
-        if (((DcMotorEx) flywheel).getVelocity() < bankVelocity - 50) {
-            shotTimer.reset();
-        }
+        servo.setPower(0.5);
 
-        if (shotTimer.milliseconds() > 1000) {
+        if (((DcMotorEx) flywheel).getVelocity() >= bankVelocity - 50) {
             coreHex.setPower(1);
         } else {
             coreHex.setPower(0);
         }
+    }
+
+    private boolean alignToTarget(double targetDegrees) {
+        if(!autoAimEnabled) return true;
+        if(Math.abs(targetDegrees) < 0.5) return true;
+
+        double steeringAdjust = 0.001f * targetDegrees;
+
+        aimFrontLeft += steeringAdjust;
+        aimFrontRight -= steeringAdjust;
+        aimBackLeft += steeringAdjust;
+        aimBackRight -= steeringAdjust;
+
+        double maxPower = 0.2;
+        aimFrontLeft = Math.min(aimFrontLeft, maxPower);
+        aimFrontRight = Math.min(aimFrontRight, maxPower);
+        aimBackLeft = Math.min(aimBackLeft, maxPower);
+        aimBackRight = Math.min(aimBackRight, maxPower);
+        aimFrontLeft = Math.max(aimFrontLeft, -maxPower);
+        aimFrontRight = Math.max(aimFrontRight, -maxPower);
+        aimBackLeft = Math.max(aimBackLeft, -maxPower);
+        aimBackRight = Math.max(aimBackRight, -maxPower);
+
+
+        frontLeftDrive.setPower(aimFrontLeft);
+        frontRightDrive.setPower(aimFrontRight);
+        backLeftDrive.setPower(aimBackLeft);
+        backRightDrive.setPower(aimBackRight);
+
+        return false;
     }
 
     /**
@@ -314,14 +427,54 @@ public class DecodeOpModeDash extends LinearOpMode {
      * When running this function, the flywheel will spin up and the Core Hex will wait before balls can be fed.
      * The servo will spin until the bumper is released.
      */
-    private void farPowerAuto() {
+    private boolean farPowerAuto() {
+        LLResult result = limelight.getLatestResult();
+
+        boolean aligned_to_target = false;
+        boolean target_detected = false;
+        if (result.isValid()) {
+            // Access fiducial results
+            List<LLResultTypes.FiducialResult> fiducialResults = result.getFiducialResults();
+            for (LLResultTypes.FiducialResult fr : fiducialResults) {
+                telemetry.addData("Fiducial", "ID: %d, Family: %s, X: %.2f, Y: %.2f", fr.getFiducialId(), fr.getFamily(), fr.getTargetXDegrees(), fr.getTargetYDegrees());
+                // Blue
+                if(fr.getFiducialId() == 20 && Objects.equals(allianceSelected, BLUE)) {
+                    target_detected = true;
+                    aligned_to_target = alignToTarget(fr.getTargetXDegrees());
+                }
+
+                // Red
+                if(fr.getFiducialId() == 24 && Objects.equals(allianceSelected, RED)) {
+                    target_detected = true;
+                    aligned_to_target = alignToTarget(fr.getTargetXDegrees() + 5.0);
+                }
+            }
+        }
+
+        if(!target_detected) {
+            telemetry.addLine("No targets detected");
+        }
+
+        if(aligned_to_target || !target_detected) {
+            aimFrontLeft = 0.0;
+            aimFrontRight = 0.0;
+            aimBackLeft = 0.0;
+            aimBackRight = 0.0;
+        }
+
+        if(!aligned_to_target && target_detected) return true;
+
+
+
         ((DcMotorEx) flywheel).setVelocity(farVelocity);
-        servo.setPower(1);
-        if (((DcMotorEx) flywheel).getVelocity() >= farVelocity - 100) {
+        servo.setPower(0.5);
+        if (((DcMotorEx) flywheel).getVelocity() >= farVelocity - 50) {
             coreHex.setPower(1);
         } else {
             coreHex.setPower(0);
         }
+
+        return false;
     }
 
     //Autonomous Code
@@ -368,7 +521,7 @@ public class DecodeOpModeDash extends LinearOpMode {
      * The robot will fire the pre-loaded balls until the 10 second timer ends.
      * Then it will back away from the goal and off the launch line.
      */
-    private void doAutoBlue() {
+    private void doAutoBlueNear() {
         if (opModeIsActive()) {
             telemetry.addData("RUNNING OPMODE", operationSelected);
             telemetry.update();
@@ -396,12 +549,39 @@ public class DecodeOpModeDash extends LinearOpMode {
         }
     }
 
+    private void doAutoBlueFar() {
+        if (opModeIsActive()) {
+            telemetry.addData("RUNNING OPMODE", operationSelected);
+            telemetry.update();
+
+            // Back Up
+            autoDrive(0.50, 5, 5, 5000);
+            // Turn
+            autoDrive(0.75, -6, 6, 5000);
+
+            // Fire balls
+            autoLaunchTimer.reset();
+            while (opModeIsActive() && autoLaunchTimer.milliseconds() < 10000) {
+                farPowerAuto();
+                telemetry.addData("Launcher Countdown", autoLaunchTimer.seconds());
+                telemetry.update();
+            }
+            ((DcMotorEx) flywheel).setVelocity(0);
+            coreHex.setPower(0);
+            servo.setPower(0);
+            // Turn
+            //autoDrive(0.25, 12, -12, 5000);
+            // Drive off Line
+            autoDrive(0.5, 13, 13, 5000);
+        }
+    }
+
     /**
      * Red Alliance Autonomous
      * The robot will fire the pre-loaded balls until the 10 second timer ends.
      * Then it will back away from the goal and off the launch line.
      */
-    private void doAutoRed() {
+    private void doAutoRedNear() {
         if (opModeIsActive()) {
             telemetry.addData("RUNNING OPMODE", operationSelected);
             telemetry.update();
@@ -427,6 +607,34 @@ public class DecodeOpModeDash extends LinearOpMode {
             autoDrive(0.25, -12, 12, 5000);
             // Drive off Line
             autoDrive(0.5, -30, -30, 5000);
+        }
+    }
+    private void doAutoRedFar() {
+        if (opModeIsActive()) {
+            telemetry.addData("RUNNING OPMODE", operationSelected);
+            telemetry.update();
+
+            // ((DcMotorEx) flywheel).setVelocity(firstBankVelocity);
+
+            // Back Up
+            autoDrive(0.5, 5, 5, 5000);
+            // Turn
+            autoDrive(0.75, 6, -6, 5000);
+
+            // Fire balls
+            autoLaunchTimer.reset();
+            while (opModeIsActive() && autoLaunchTimer.milliseconds() < 10000) {
+                farPowerAuto();
+                telemetry.addData("Launcher Countdown", autoLaunchTimer.seconds());
+                telemetry.update();
+            }
+            ((DcMotorEx) flywheel).setVelocity(0);
+            coreHex.setPower(0);
+            servo.setPower(0);
+            // Turn
+            //autoDrive(0.25, -12, 12, 5000);
+            // Drive off Line
+            autoDrive(0.5, 13, 13, 5000);
         }
     }
 
